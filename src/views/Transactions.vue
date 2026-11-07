@@ -10,7 +10,7 @@
             </h1>
             <p class="text-slate-300 mt-2 text-lg">Track and manage your financial transactions</p>
           </div>
-          <div class="flex gap-3">
+          <div class="flex flex-wrap gap-3">
             <button
               v-if="selectedTransactions.length > 0"
               @click="deleteSelectedTransactions"
@@ -20,6 +20,15 @@
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
               </svg>
               Delete Selected ({{ selectedTransactions.length }})
+            </button>
+            <button
+              @click="showRecurringIncomeModal = true"
+              class="px-6 py-3 bg-gradient-to-r from-emerald-500 to-green-600 text-white rounded-xl hover:from-emerald-600 hover:to-green-700 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-2 transform transition-all duration-200 hover:scale-105 shadow-lg"
+            >
+              <svg class="w-5 h-5 inline mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1" />
+              </svg>
+              Recurring income
             </button>
             <button
               @click="openAddTransactionModal"
@@ -123,7 +132,7 @@
               v-model="showUpcomingBills"
               class="rounded border-slate-600 text-cyan-600 focus:ring-cyan-500 bg-slate-800"
             />
-            <span>Show upcoming bills</span>
+            <span>Show upcoming bills & income</span>
           </label>
         </div>
 
@@ -161,7 +170,7 @@
           <span class="font-bold tabular-nums" :class="projectedEndBalance >= 0 ? 'text-cyan-400' : 'text-red-400'">
             {{ formatCurrency(projectedEndBalance) }}
           </span>
-          <span class="text-slate-500">({{ upcomingRowsInRange.length }} upcoming bill{{ upcomingRowsInRange.length === 1 ? '' : 's' }})</span>
+          <span class="text-slate-500">({{ upcomingRowsInRange.length }} upcoming)</span>
         </div>
       </div>
 
@@ -292,7 +301,7 @@
                   <button
                     v-if="transaction.isUpcoming"
                     type="button"
-                    @click="openConfirmBillModal(transaction)"
+                    @click="openConfirmUpcomingModal(transaction)"
                     class="px-3 py-1.5 text-xs font-semibold text-cyan-300 bg-cyan-950/60 border border-cyan-700/80 rounded-lg hover:bg-cyan-900/70 hover:text-white transition-colors duration-150 whitespace-nowrap"
                   >
                     Confirm
@@ -363,22 +372,37 @@
     :upcomingRow="selectedUpcomingRow"
     @confirmed="handleBillConfirmed"
   />
+
+  <ConfirmIncomeModal
+    v-model:isOpen="showConfirmIncomeModal"
+    :upcomingRow="selectedUpcomingIncomeRow"
+    @confirmed="handleIncomeConfirmed"
+  />
+
+  <RecurringIncomeModal
+    v-model:isOpen="showRecurringIncomeModal"
+  />
 </template>
 
 <script setup>
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useTransactionsStore } from '@/stores/transactions'
 import { useBillsStore } from '@/stores/bills'
+import { useRecurringIncomeStore } from '@/stores/recurringIncome'
 import { useAuthStore } from '@/stores/auth'
 import { useLifeEnergyStore } from '@/stores/lifeEnergy'
 import AddTransactionModal from '@/components/AddTransactionModal.vue'
 import EditTransactionModal from '@/components/EditTransactionModal.vue'
 import ConfirmBillModal from '@/components/ConfirmBillModal.vue'
+import ConfirmIncomeModal from '@/components/ConfirmIncomeModal.vue'
+import RecurringIncomeModal from '@/components/RecurringIncomeModal.vue'
 import { parseESTDate, getTodayEST } from '@/utils/dateUtils'
 import { getUpcomingBillRows } from '@/utils/upcomingBills'
+import { getUpcomingIncomeRows } from '@/utils/upcomingIncome'
 
 const transactionsStore = useTransactionsStore()
 const billsStore = useBillsStore()
+const recurringIncomeStore = useRecurringIncomeStore()
 const authStore = useAuthStore()
 const lifeEnergyStore = useLifeEnergyStore()
 
@@ -402,6 +426,14 @@ watch(
 watch(
   () => authStore.isLoggedIn,
   async (loggedIn) => {
+    if (loggedIn) await recurringIncomeStore.initialize()
+  },
+  { immediate: true }
+)
+
+watch(
+  () => authStore.isLoggedIn,
+  async (loggedIn) => {
     if (loggedIn) await lifeEnergyStore.loadFromSupabase()
   },
   { immediate: true }
@@ -413,6 +445,9 @@ const showEditModal = ref(false)
 const selectedTransaction = ref(null)
 const showConfirmBillModal = ref(false)
 const selectedUpcomingRow = ref(null)
+const showConfirmIncomeModal = ref(false)
+const selectedUpcomingIncomeRow = ref(null)
+const showRecurringIncomeModal = ref(false)
 
 // Filter and sort state — default to current month
 const now = getTodayEST()
@@ -443,12 +478,17 @@ function compareRowIds(idA, idB) {
   return String(idA).localeCompare(String(idB))
 }
 
+function getRowOrderRank(row) {
+  if (!row.isUpcoming) return 0
+  if (row.isIncome) return 1
+  return 2
+}
+
 function compareChronological(a, b) {
   const dateDiff = parseESTDate(a.date) - parseESTDate(b.date)
   if (dateDiff !== 0) return dateDiff
-  const aUp = a.isUpcoming ? 1 : 0
-  const bUp = b.isUpcoming ? 1 : 0
-  if (aUp !== bUp) return aUp - bUp
+  const rankDiff = getRowOrderRank(a) - getRowOrderRank(b)
+  if (rankDiff !== 0) return rankDiff
   return compareRowIds(a.id, b.id)
 }
 
@@ -512,8 +552,8 @@ function sortTransactions(transactions, sortBy, sortOrder) {
   })
 }
 
-// Upcoming bill rows for the selected date range
-const upcomingRowsInRange = computed(() => {
+// Upcoming bill and income rows for the selected date range
+const upcomingBillRowsInRange = computed(() => {
   if (!showUpcomingBills.value) return []
   const rawRows = getUpcomingBillRows(
     billsStore.getBills || [],
@@ -521,6 +561,23 @@ const upcomingRowsInRange = computed(() => {
     dateRange.value
   )
   return filterTransactionsByDateRange(rawRows, dateRange.value)
+})
+
+const upcomingIncomeRowsInRange = computed(() => {
+  if (!showUpcomingBills.value) return []
+  if (!dateRange.value || !dateRange.value.start || !dateRange.value.end) return []
+  const rawRows = getUpcomingIncomeRows(
+    recurringIncomeStore.getSources || [],
+    recurringIncomeStore.getConfirmedOccurrences || {},
+    dateRange.value.start,
+    dateRange.value.end
+  )
+  return filterTransactionsByDateRange(rawRows, dateRange.value)
+})
+
+const upcomingRowsInRange = computed(() => {
+  if (!showUpcomingBills.value) return []
+  return [...upcomingIncomeRowsInRange.value, ...upcomingBillRowsInRange.value]
 })
 
 // Chronological list of all real transactions + (when toggle is on) upcoming rows
@@ -593,8 +650,8 @@ const realFilteredTransactions = computed(() => {
 const preFilteredTransactions = computed(() => {
   const realTxs = filterTransactionsByDateRange(transactionsStore.getTransactions || [], dateRange.value)
   let txs = showUpcomingBills.value ? [...realTxs, ...upcomingRowsInRange.value] : realTxs
-  if (typeFilter.value === 'income') txs = txs.filter(t => !t.isUpcoming && t.amount > 0)
-  else if (typeFilter.value === 'expenses') txs = txs.filter(t => t.isUpcoming || t.amount < 0)
+  if (typeFilter.value === 'income') txs = txs.filter(t => t.amount > 0)
+  else if (typeFilter.value === 'expenses') txs = txs.filter(t => t.amount < 0 || (t.isUpcoming && !t.isIncome))
   txs = searchTransactions(txs, searchTerm.value)
   return txs
 })
@@ -721,14 +778,24 @@ const handleTransactionUpdated = () => {
   selectedTransaction.value = null
 }
 
-const openConfirmBillModal = (upcomingRow) => {
-  selectedUpcomingRow.value = upcomingRow
-  showConfirmBillModal.value = true
+const openConfirmUpcomingModal = (upcomingRow) => {
+  if (upcomingRow?.isIncome) {
+    selectedUpcomingIncomeRow.value = upcomingRow
+    showConfirmIncomeModal.value = true
+  } else {
+    selectedUpcomingRow.value = upcomingRow
+    showConfirmBillModal.value = true
+  }
 }
 
 const handleBillConfirmed = () => {
   showConfirmBillModal.value = false
   selectedUpcomingRow.value = null
+}
+
+const handleIncomeConfirmed = () => {
+  showConfirmIncomeModal.value = false
+  selectedUpcomingIncomeRow.value = null
 }
 
 const openMenuId = ref(null)
