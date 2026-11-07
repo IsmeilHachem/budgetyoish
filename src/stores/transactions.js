@@ -132,7 +132,8 @@ export const useTransactionsStore = defineStore('transactions', {
         .reduce((total, t) => total + t.amount, 0)
     },
 
-    async addTransaction(transaction) {
+    async addTransaction(transaction, options = {}) {
+      const { skipBillMatch = false } = typeof options === 'boolean' ? { skipBillMatch: options } : options
       const categoriesStore = useCategoriesStore()
       const billsStore = useBillsStore()
       const authStore = useAuthStore()
@@ -161,7 +162,7 @@ export const useTransactionsStore = defineStore('transactions', {
       const categoryTotal = this.calculateCategoryTotal(mainCategory, subcategory)
       categoriesStore.updateCategoryAmount(mainCategory, subcategory, categoryTotal)
 
-      if (!transaction.isIncome) {
+      if (!transaction.isIncome && !skipBillMatch) {
         billsStore.checkAndMarkPayment(
           transaction.description,
           Math.abs(transaction.amount),

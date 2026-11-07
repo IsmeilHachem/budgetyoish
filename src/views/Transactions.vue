@@ -117,6 +117,14 @@
             :class="typeFilter === 'expenses' ? 'bg-red-600 text-white border-red-600' : 'text-slate-400 border-slate-600 hover:border-slate-500 bg-slate-800'">
             Expenses
           </button>
+          <label class="ml-auto inline-flex items-center gap-2 cursor-pointer select-none text-sm font-medium text-slate-300">
+            <input
+              type="checkbox"
+              v-model="showUpcomingBills"
+              class="rounded border-slate-600 text-cyan-600 focus:ring-cyan-500 bg-slate-800"
+            />
+            <span>Show upcoming bills</span>
+          </label>
         </div>
 
         <!-- Category pills -->
@@ -136,16 +144,25 @@
       </div>
 
       <!-- Summary bar -->
-      <div class="bg-slate-800 rounded-2xl shadow-xl px-6 py-3 mb-4 border border-slate-700 border-l-4 border-l-cyan-500 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
-        <span class="text-slate-400 font-medium">{{ filteredAndSortedTransactions.length }} transaction{{ filteredAndSortedTransactions.length === 1 ? '' : 's' }}</span>
-        <span class="text-slate-600 hidden sm:inline">·</span>
-        <span class="font-semibold text-green-400">Income: {{ formatCurrency(filteredIncome) }}</span>
-        <span class="text-slate-600 hidden sm:inline">·</span>
-        <span class="font-semibold text-red-400">Expenses: {{ formatCurrency(Math.abs(filteredExpenses)) }}</span>
-        <span class="text-slate-600 hidden sm:inline">·</span>
-        <span class="font-semibold" :class="filteredNet >= 0 ? 'text-green-400' : 'text-red-400'">
-          Net: {{ filteredNet >= 0 ? '+' : '' }}{{ formatCurrency(filteredNet) }}
-        </span>
+      <div class="bg-slate-800 rounded-2xl shadow-xl px-6 py-3 mb-4 border border-slate-700 border-l-4 border-l-cyan-500 text-sm">
+        <div class="flex flex-wrap items-center gap-x-4 gap-y-1">
+          <span class="text-slate-400 font-medium">{{ realFilteredTransactions.length }} transaction{{ realFilteredTransactions.length === 1 ? '' : 's' }}</span>
+          <span class="text-slate-600 hidden sm:inline">·</span>
+          <span class="font-semibold text-green-400">Income: {{ formatCurrency(filteredIncome) }}</span>
+          <span class="text-slate-600 hidden sm:inline">·</span>
+          <span class="font-semibold text-red-400">Expenses: {{ formatCurrency(Math.abs(filteredExpenses)) }}</span>
+          <span class="text-slate-600 hidden sm:inline">·</span>
+          <span class="font-semibold" :class="filteredNet >= 0 ? 'text-green-400' : 'text-red-400'">
+            Net: {{ filteredNet >= 0 ? '+' : '' }}{{ formatCurrency(filteredNet) }}
+          </span>
+        </div>
+        <div v-if="showUpcomingBills && upcomingRowsInRange.length > 0 && projectedEndBalance !== null" class="mt-1.5 pt-1.5 border-t border-slate-700/70 flex flex-wrap items-center gap-x-2 text-xs text-slate-300">
+          <span class="font-medium text-slate-400">Projected end balance:</span>
+          <span class="font-bold tabular-nums" :class="projectedEndBalance >= 0 ? 'text-cyan-400' : 'text-red-400'">
+            {{ formatCurrency(projectedEndBalance) }}
+          </span>
+          <span class="text-slate-500">({{ upcomingRowsInRange.length }} upcoming bill{{ upcomingRowsInRange.length === 1 ? '' : 's' }})</span>
+        </div>
       </div>
 
       <!-- Transactions Table -->
@@ -205,22 +222,33 @@
             <tbody class="bg-slate-800 divide-y divide-slate-700">
               <tr v-for="transaction in paginatedTransactions" :key="transaction.id" 
                   :class="[
-                    'hover:bg-slate-700/50 transition-colors duration-200',
-                    isFutureTransaction(transaction.date) ? 'bg-cyan-950/30 hover:bg-cyan-950/50' : ''
+                    'transition-colors duration-200',
+                    transaction.isUpcoming
+                      ? 'bg-slate-900/50 hover:bg-slate-800/70 opacity-75'
+                      : (isFutureTransaction(transaction.date) ? 'bg-cyan-950/30 hover:bg-cyan-950/50' : 'hover:bg-slate-700/50')
                   ]">
                 <td class="px-3 md:px-6 py-4">
                   <input
+                    v-if="!transaction.isUpcoming"
                     type="checkbox"
                     v-model="selectedTransactions"
                     :value="transaction.id"
                     class="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
                   >
                 </td>
-                <td class="px-3 md:px-6 py-4 text-sm font-medium text-slate-200">
+                <td class="px-3 md:px-6 py-4 text-sm font-medium" :class="transaction.isUpcoming ? 'text-slate-400' : 'text-slate-200'">
                   {{ formatDate(transaction.date) }}
                 </td>
-                <td class="px-3 md:px-6 py-4 text-sm text-slate-200">
-                  {{ transaction.description || '-' }}
+                <td class="px-3 md:px-6 py-4 text-sm" :class="transaction.isUpcoming ? 'text-slate-300' : 'text-slate-200'">
+                  <div class="flex items-center gap-2 flex-wrap">
+                    <span :class="{ 'capitalize': transaction.isUpcoming }">{{ transaction.description || '-' }}</span>
+                    <span
+                      v-if="transaction.isUpcoming"
+                      class="px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide rounded-full bg-amber-950/60 text-amber-300 border border-amber-700/60"
+                    >
+                      Upcoming
+                    </span>
+                  </div>
                 </td>
                 <td class="px-3 md:px-6 py-4 text-sm text-slate-200">
                   <span class="bg-slate-700 text-slate-300 px-3 py-1 rounded-full text-xs font-medium">
@@ -229,11 +257,15 @@
                 </td>
                 <td class="px-3 md:px-6 py-4 text-sm text-right tabular-nums font-semibold"
                   :class="{
-                    'text-green-600': transaction.amount > 0,
-                    'text-red-600': transaction.amount < 0
+                    'text-green-600': !transaction.noAmount && transaction.amount > 0,
+                    'text-red-600': !transaction.noAmount && transaction.amount < 0,
+                    'text-slate-500': transaction.noAmount
                   }"
                 >
                   {{ formatCurrency(transaction.amount) }}
+                  <div v-if="transaction.isUpcoming && transaction.noAmount" class="text-xs text-amber-400/90 font-normal mt-0.5 italic">
+                    amount not set
+                  </div>
                   <div v-if="lifeEnergyStore.lifeEnergyRate > 0 && transaction.amount < 0"
                        class="text-xs text-gray-400 font-normal mt-0.5">
                     ≈ {{ lifeEnergyStore.toCost(transaction.amount) }}
@@ -257,7 +289,15 @@
                   {{ formatCurrency(transaction.runningTotal) }}
                 </td>
                 <td class="relative px-3 md:px-6 py-4 text-right text-sm">
-                  <div class="relative inline-flex items-center justify-end">
+                  <button
+                    v-if="transaction.isUpcoming"
+                    type="button"
+                    @click="openConfirmBillModal(transaction)"
+                    class="px-3 py-1.5 text-xs font-semibold text-cyan-300 bg-cyan-950/60 border border-cyan-700/80 rounded-lg hover:bg-cyan-900/70 hover:text-white transition-colors duration-150 whitespace-nowrap"
+                  >
+                    Confirm
+                  </button>
+                  <div v-else class="relative inline-flex items-center justify-end">
                     <button
                       type="button"
                       @click.stop="toggleMenu(transaction.id)"
@@ -317,18 +357,28 @@
     :transaction="selectedTransaction"
     @transaction-updated="handleTransactionUpdated"
   />
+
+  <ConfirmBillModal
+    v-model:isOpen="showConfirmBillModal"
+    :upcomingRow="selectedUpcomingRow"
+    @confirmed="handleBillConfirmed"
+  />
 </template>
 
 <script setup>
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useTransactionsStore } from '@/stores/transactions'
+import { useBillsStore } from '@/stores/bills'
 import { useAuthStore } from '@/stores/auth'
 import { useLifeEnergyStore } from '@/stores/lifeEnergy'
 import AddTransactionModal from '@/components/AddTransactionModal.vue'
 import EditTransactionModal from '@/components/EditTransactionModal.vue'
+import ConfirmBillModal from '@/components/ConfirmBillModal.vue'
 import { parseESTDate, getTodayEST } from '@/utils/dateUtils'
+import { getUpcomingBillRows } from '@/utils/upcomingBills'
 
 const transactionsStore = useTransactionsStore()
+const billsStore = useBillsStore()
 const authStore = useAuthStore()
 const lifeEnergyStore = useLifeEnergyStore()
 
@@ -337,6 +387,14 @@ watch(
   () => authStore.isLoggedIn,
   async (loggedIn) => {
     if (loggedIn && !transactionsStore.initialized) await transactionsStore.loadFromSupabase()
+  },
+  { immediate: true }
+)
+
+watch(
+  () => authStore.isLoggedIn,
+  async (loggedIn) => {
+    if (loggedIn) await billsStore.initialize()
   },
   { immediate: true }
 )
@@ -353,9 +411,11 @@ const allSelected = ref(false)
 const showAddModal = ref(false)
 const showEditModal = ref(false)
 const selectedTransaction = ref(null)
+const showConfirmBillModal = ref(false)
+const selectedUpcomingRow = ref(null)
 
 // Filter and sort state — default to current month
-const now = new Date()
+const now = getTodayEST()
 const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
 const dateRange = ref({
   start: currentMonth,
@@ -366,11 +426,30 @@ const sortBy = ref('date')
 const sortOrder = ref('desc')
 const typeFilter = ref('all') // 'all' | 'income' | 'expenses'
 const selectedCategory = ref(null) // null = all categories
+const showUpcomingBills = ref(true)
 
 function setTypeFilter(val) {
   typeFilter.value = val
   selectedCategory.value = null
   displayLimit.value = PAGE_SIZE
+}
+
+function compareRowIds(idA, idB) {
+  const numA = Number(idA)
+  const numB = Number(idB)
+  if (!isNaN(numA) && !isNaN(numB)) {
+    return numA - numB
+  }
+  return String(idA).localeCompare(String(idB))
+}
+
+function compareChronological(a, b) {
+  const dateDiff = parseESTDate(a.date) - parseESTDate(b.date)
+  if (dateDiff !== 0) return dateDiff
+  const aUp = a.isUpcoming ? 1 : 0
+  const bUp = b.isUpcoming ? 1 : 0
+  if (aUp !== bUp) return aUp - bUp
+  return compareRowIds(a.id, b.id)
 }
 
 // Helper function to filter transactions by date range
@@ -414,13 +493,7 @@ function sortTransactions(transactions, sortBy, sortOrder) {
     let comparison = 0
     switch (sortBy) {
       case 'date': {
-        const dateDiff = parseESTDate(a.date) - parseESTDate(b.date)
-        if (dateDiff !== 0) {
-          comparison = dateDiff
-        } else {
-          // Same date: sort by ID
-          comparison = a.id - b.id
-        }
+        comparison = compareChronological(a, b)
         break
       }
       case 'amount':
@@ -439,23 +512,44 @@ function sortTransactions(transactions, sortBy, sortOrder) {
   })
 }
 
-// Helper: Precompute running totals for all transactions (full list, EST, by date and ID)
+// Upcoming bill rows for the selected date range
+const upcomingRowsInRange = computed(() => {
+  if (!showUpcomingBills.value) return []
+  const rawRows = getUpcomingBillRows(
+    billsStore.getBills || [],
+    billsStore.billMonthStatus || {},
+    dateRange.value
+  )
+  return filterTransactionsByDateRange(rawRows, dateRange.value)
+})
+
+// Chronological list of all real transactions + (when toggle is on) upcoming rows
+const allChronologicalRows = computed(() => {
+  const realTx = transactionsStore.getTransactions || []
+  const combined = showUpcomingBills.value
+    ? [...realTx, ...upcomingRowsInRange.value]
+    : [...realTx]
+  return combined.sort(compareChronological)
+})
+
+// Single chronological pass for running totals (used for every sort direction)
 const runningTotalsMap = computed(() => {
-  const allTx = [...(transactionsStore.getTransactions || [])].sort((a, b) => {
-    const dateA = parseESTDate(a.date)
-    const dateB = parseESTDate(b.date)
-    if (dateA.getTime() !== dateB.getTime()) {
-      return dateA - dateB
-    }
-    return a.id - b.id
-  })
   let total = 0
   const map = {}
-  allTx.forEach(tx => {
+  allChronologicalRows.value.forEach(tx => {
     total += tx.amount
     map[tx.id] = total
   })
   return map
+})
+
+// Projected end balance: running total after the last row dated inside the selected date range
+const projectedEndBalance = computed(() => {
+  if (!showUpcomingBills.value || upcomingRowsInRange.value.length === 0) return null
+  const rowsInRange = filterTransactionsByDateRange(allChronologicalRows.value, dateRange.value)
+  if (rowsInRange.length === 0) return null
+  const lastRow = rowsInRange[rowsInRange.length - 1]
+  return runningTotalsMap.value[lastRow.id] ?? null
 })
 
 // Pagination
@@ -463,7 +557,7 @@ const PAGE_SIZE = 50
 const displayLimit = ref(PAGE_SIZE)
 
 // Reset to first page whenever any filter or sort changes
-watch([dateRange, searchTerm, sortBy, sortOrder, typeFilter, selectedCategory], () => {
+watch([dateRange, searchTerm, sortBy, sortOrder, typeFilter, selectedCategory, showUpcomingBills], () => {
   displayLimit.value = PAGE_SIZE
 }, { deep: true })
 
@@ -475,12 +569,32 @@ function loadMore() {
   displayLimit.value += PAGE_SIZE
 }
 
-// Transactions after date, type, and search — used for category pills and summary
-const preFilteredTransactions = computed(() => {
+// Real transactions filtered by date, type, search, and category — used exclusively for summary bar totals
+const realPreFilteredTransactions = computed(() => {
   let txs = transactionsStore.getTransactions || []
   txs = filterTransactionsByDateRange(txs, dateRange.value)
   if (typeFilter.value === 'income') txs = txs.filter(t => t.amount > 0)
   else if (typeFilter.value === 'expenses') txs = txs.filter(t => t.amount < 0)
+  txs = searchTransactions(txs, searchTerm.value)
+  return txs
+})
+
+const realFilteredTransactions = computed(() => {
+  let txs = realPreFilteredTransactions.value.slice()
+  if (selectedCategory.value) {
+    txs = txs.filter(t =>
+      t.category && t.category.split(' - ')[0] === selectedCategory.value
+    )
+  }
+  return txs
+})
+
+// Transactions (including upcoming rows when toggled on) after date, type, and search — used for category pills and table
+const preFilteredTransactions = computed(() => {
+  const realTxs = filterTransactionsByDateRange(transactionsStore.getTransactions || [], dateRange.value)
+  let txs = showUpcomingBills.value ? [...realTxs, ...upcomingRowsInRange.value] : realTxs
+  if (typeFilter.value === 'income') txs = txs.filter(t => !t.isUpcoming && t.amount > 0)
+  else if (typeFilter.value === 'expenses') txs = txs.filter(t => t.isUpcoming || t.amount < 0)
   txs = searchTransactions(txs, searchTerm.value)
   return txs
 })
@@ -507,57 +621,20 @@ const filteredAndSortedTransactions = computed(() => {
 
   // Sort transactions
   transactions = sortTransactions(transactions, sortBy.value, sortOrder.value)
-  
-  // Smart running total logic
-  if (sortBy.value === 'date' && sortOrder.value === 'asc') {
-    // Chronological order: use precomputed map
-    return transactions.map(transaction => ({
-      ...transaction,
-      runningTotal: runningTotalsMap.value[transaction.id] ?? transaction.amount
-    }))
-  } else if (sortBy.value === 'date' && sortOrder.value === 'desc') {
-    // Reverse chronological: calculate running total in reverse
-    // Get all transactions in chronological order
-    const allTx = [...transactionsStore.getTransactions || []].sort((a, b) => {
-      const dateA = parseESTDate(a.date)
-      const dateB = parseESTDate(b.date)
-      if (dateA.getTime() !== dateB.getTime()) {
-        return dateA - dateB
-      }
-      return a.id - b.id
-    })
-    // Compute current balance
-    let currentBalance = 0
-    allTx.forEach(tx => { currentBalance += tx.amount })
-    // Map of id to amount
-    const amountMap = {}
-    allTx.forEach(tx => { amountMap[tx.id] = tx.amount })
-    // Calculate running total in reverse for displayed transactions
-    let running = currentBalance
-    const result = []
-    for (const transaction of transactions) {
-      result.push({
-        ...transaction,
-        runningTotal: running
-      })
-      running -= amountMap[transaction.id] ?? transaction.amount
-    }
-    return result
-  } else {
-    // Other sorts: use chronological map
-    return transactions.map(transaction => ({
-      ...transaction,
-      runningTotal: runningTotalsMap.value[transaction.id] ?? transaction.amount
-    }))
-  }
+
+  // Every sort direction looks up its running total from the single chronological pass
+  return transactions.map(transaction => ({
+    ...transaction,
+    runningTotal: runningTotalsMap.value[transaction.id] ?? transaction.amount
+  }))
 })
 
-// Summary bar totals (full filtered set, before pagination)
+// Summary bar totals (REAL transactions only, never upcoming rows)
 const filteredIncome = computed(() =>
-  filteredAndSortedTransactions.value.filter(t => t.amount > 0).reduce((s, t) => s + t.amount, 0)
+  realFilteredTransactions.value.filter(t => t.amount > 0).reduce((s, t) => s + t.amount, 0)
 )
 const filteredExpenses = computed(() =>
-  filteredAndSortedTransactions.value.filter(t => t.amount < 0).reduce((s, t) => s + t.amount, 0)
+  realFilteredTransactions.value.filter(t => t.amount < 0).reduce((s, t) => s + t.amount, 0)
 )
 const filteredNet = computed(() => filteredIncome.value + filteredExpenses.value)
 
@@ -592,14 +669,17 @@ const toggleSortOrder = () => {
 }
 
 const deleteTransaction = async (id) => {
+  if (String(id).startsWith('upcoming-')) return
   if (confirm('Are you sure you want to delete this transaction?')) {
     await transactionsStore.deleteTransaction(id)
   }
 }
 
 const deleteSelectedTransactions = async () => {
-  if (confirm(`Are you sure you want to delete ${selectedTransactions.value.length} transactions?`)) {
-    await Promise.all(selectedTransactions.value.map(id => transactionsStore.deleteTransaction(id)))
+  const realIds = selectedTransactions.value.filter(id => !String(id).startsWith('upcoming-'))
+  if (realIds.length === 0) return
+  if (confirm(`Are you sure you want to delete ${realIds.length} transactions?`)) {
+    await Promise.all(realIds.map(id => transactionsStore.deleteTransaction(id)))
     selectedTransactions.value = []
     allSelected.value = false
   }
@@ -608,7 +688,9 @@ const deleteSelectedTransactions = async () => {
 const selectAll = () => {
   allSelected.value = !allSelected.value
   if (allSelected.value) {
-    selectedTransactions.value = filteredAndSortedTransactions.value.map(t => t.id)
+    selectedTransactions.value = filteredAndSortedTransactions.value
+      .filter(t => !t.isUpcoming)
+      .map(t => t.id)
   } else {
     selectedTransactions.value = []
   }
@@ -616,7 +698,9 @@ const selectAll = () => {
 
 const toggleAll = () => {
   if (allSelected.value) {
-    selectedTransactions.value = filteredAndSortedTransactions.value.map(t => t.id)
+    selectedTransactions.value = filteredAndSortedTransactions.value
+      .filter(t => !t.isUpcoming)
+      .map(t => t.id)
   } else {
     selectedTransactions.value = []
   }
@@ -627,6 +711,7 @@ const openAddTransactionModal = () => {
 }
 
 const editTransaction = (transaction) => {
+  if (transaction?.isUpcoming) return
   selectedTransaction.value = transaction
   showEditModal.value = true
 }
@@ -634,6 +719,16 @@ const editTransaction = (transaction) => {
 const handleTransactionUpdated = () => {
   showEditModal.value = false
   selectedTransaction.value = null
+}
+
+const openConfirmBillModal = (upcomingRow) => {
+  selectedUpcomingRow.value = upcomingRow
+  showConfirmBillModal.value = true
+}
+
+const handleBillConfirmed = () => {
+  showConfirmBillModal.value = false
+  selectedUpcomingRow.value = null
 }
 
 const openMenuId = ref(null)
