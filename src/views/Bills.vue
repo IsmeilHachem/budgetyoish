@@ -101,6 +101,13 @@
         >
           By Category
         </button>
+        <button
+          @click="viewMode = 'weekly'"
+          class="px-5 py-2 text-sm font-medium transition-colors duration-200"
+          :class="viewMode === 'weekly' ? 'bg-rose-500 text-white' : 'bg-slate-700 text-slate-300'"
+        >
+          Weekly Costs
+        </button>
       </div>
 
       <!-- By Due Date View -->
@@ -457,6 +464,13 @@
 
       </div><!-- end category view -->
 
+      <!-- Weekly Costs View -->
+      <WeeklyCostsView
+        v-if="viewMode === 'weekly'"
+        :bills="billsForMonth"
+        :selected-month="selectedMonth"
+      />
+
       <!-- Bill Add/Edit Modal -->
       <BillModal
         v-if="showAddModal || editingBill"
@@ -505,6 +519,7 @@ import { useBillsStore } from '@/stores/bills'
 import { useAuthStore } from '@/stores/auth'
 import { useLifeEnergyStore } from '@/stores/lifeEnergy'
 import BillModal from '@/components/BillModal.vue'
+import WeeklyCostsView from '@/components/WeeklyCostsView.vue'
 
 const billsStore = useBillsStore()
 const authStore = useAuthStore()
