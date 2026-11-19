@@ -91,6 +91,12 @@
       @set-bills-paid-off="handleSetBillsPaidOff"
     />
 
+    <!-- True Count Section (above Monthly Summary) -->
+    <TrueCountSection
+      :true-count="trueCountData"
+      :selected-month="selectedMonth"
+    />
+
     <!-- Monthly Summary Card (Calendar Month: Before vs. After) -->
     <div class="bg-slate-800 rounded-2xl shadow-xl border border-slate-700 border-l-4 border-l-rose-500 overflow-hidden">
       <div class="px-6 py-4 border-b border-slate-700">
@@ -491,8 +497,10 @@ import { useTransactionsStore } from '@/stores/transactions'
 import { useRecurringIncomeStore } from '@/stores/recurringIncome'
 import { useDebtPlanStore } from '@/stores/debtPlan'
 import PayoffHelperSection from '@/components/PayoffHelperSection.vue'
+import TrueCountSection from '@/components/TrueCountSection.vue'
 import {
   buildMonthlyPayWeekPlan,
+  buildTrueCountSummary,
   calculateMonthlyCategoryExtraSpending,
   getActiveBillsForMonth
 } from '@/utils/weeklyCosts'
@@ -596,6 +604,20 @@ const spendingData = computed(() =>
 
 const plan = computed(() =>
   buildMonthlyPayWeekPlan({
+    selectedMonth: props.selectedMonth,
+    rawBills: billsStore.getBills,
+    billMonthStatus: billsStore.billMonthStatus,
+    incomeSources: recurringIncomeStore.getSources,
+    confirmedOccurrences: recurringIncomeStore.getConfirmedOccurrences,
+    transactions: transactionsStore.getTransactions,
+    paidOffBillIds: paidOffBillIds.value,
+    monthlyLoanPayment: monthlyLoanPayment.value,
+    loanPaymentDay: loanPaymentDay.value
+  })
+)
+
+const trueCountData = computed(() =>
+  buildTrueCountSummary({
     selectedMonth: props.selectedMonth,
     rawBills: billsStore.getBills,
     billMonthStatus: billsStore.billMonthStatus,

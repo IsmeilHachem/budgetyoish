@@ -5,13 +5,15 @@ import {
   projectIncomeForDateRange,
   projectLoanPaymentDateForMonth,
   buildMonthlyPayWeekPlan,
+  buildTrueCountSummary,
   filterExtraSpendingTransactions,
   calculateExtraSpendingForRange,
   calculateMonthlyCategoryExtraSpending,
-  buildPayoffHelperData
+  buildPayoffHelperData,
+  calculateLoanCostComparison
 } from '../src/utils/weeklyCosts'
 
-describe('weeklyCosts helper (Pay Weeks, Actual Extra Spending, Backdated Income & Payoff Helper)', () => {
+describe('weeklyCosts helper (Pay Weeks, Actual Extra Spending, Backdated Income, True Count & Payoff Helper)', () => {
   it('generates Friday-to-Thursday pay weeks starting from the Friday on or before the 1st so every day of the month is covered', () => {
     const weeksNov = getPayWeeksForMonth('2026-11')
     expect(weeksNov).toEqual([
@@ -71,7 +73,6 @@ describe('weeklyCosts helper (Pay Weeks, Actual Extra Spending, Backdated Income
         amount: 1000,
         category: 'Pay Day - Pay Day',
         frequency: 'weekly',
-        // Saved start date is Nov 6, but Pay Week 1 starts Oct 30
         startDate: '2026-11-06',
         days: [],
         endDate: null
@@ -82,7 +83,6 @@ describe('weeklyCosts helper (Pay Weeks, Actual Extra Spending, Backdated Income
         amount: 1400,
         category: 'Pay Day - Pay Day',
         frequency: 'biweekly',
-        // Saved start date is Nov 13 -> stepping back 14 days lands on Oct 30
         startDate: '2026-11-13',
         days: [],
         endDate: null
@@ -93,7 +93,6 @@ describe('weeklyCosts helper (Pay Weeks, Actual Extra Spending, Backdated Income
         amount: 2000,
         category: 'Income - Salary',
         frequency: 'monthly',
-        // Saved start date is Nov 15, projecting for Oct 30 - Nov 5 where day is 31 -> Oct 31
         startDate: '2026-11-15',
         days: [31],
         endDate: null
@@ -112,7 +111,6 @@ describe('weeklyCosts helper (Pay Weeks, Actual Extra Spending, Backdated Income
 
     const rows = projectIncomeForDateRange(sources, {}, '2026-10-30', '2026-11-05')
 
-    // Original source startDate must not be mutated
     expect(sources[0].startDate).toBe('2026-11-06')
     expect(sources[1].startDate).toBe('2026-11-13')
     expect(sources[2].startDate).toBe('2026-11-15')
@@ -131,15 +129,11 @@ describe('weeklyCosts helper (Pay Weeks, Actual Extra Spending, Backdated Income
     ]
 
     const transactions = [
-      // Included: non-bill name and non-bill category
       { id: 't-1', date: '2026-11-02', description: 'Supermarket', category: 'Food - Groceries', amount: -150, isIncome: false },
       { id: 't-2', date: '2026-11-08', description: 'Coffee Shop', category: 'Food - Dining Out', amount: -25, isIncome: false },
       { id: 't-3', date: '2026-11-14', description: 'Fuel Station', category: 'Transportation - Gas', amount: -60, isIncome: false },
-      // Excluded by exact normalized bill name (even if logged under a different category)
       { id: 't-4', date: '2026-11-03', description: '  Example Electric ', category: 'Miscellaneous - Other', amount: -120, isIncome: false },
-      // Excluded by matching an active bill's category ('Debt - Credit Cards'), even though description doesn't match 'example card a'
       { id: 't-5', date: '2026-11-04', description: 'Unlisted Card Payment #999', category: 'Debt - Credit Cards', amount: -300, isIncome: false },
-      // Excluded: Starting Balance & Income
       { id: 't-6', date: '2026-11-01', description: 'Starting Balance', category: 'Miscellaneous - Other', amount: -500, isIncome: false },
       { id: 't-7', date: '2026-11-06', description: 'Example Paycheck', category: 'Pay Day - Pay Day', amount: 1000, isIncome: true }
     ]
@@ -147,10 +141,8 @@ describe('weeklyCosts helper (Pay Weeks, Actual Extra Spending, Backdated Income
     const filtered = filterExtraSpendingTransactions(transactions, activeBills, '2026-11-01', '2026-11-30')
     expect(filtered.map(t => t.id)).toEqual(['t-1', 't-2', 't-3'])
 
-    // Week 1 (Oct 30 - Nov 5): only t-1 ($150)
     expect(calculateExtraSpendingForRange(transactions, activeBills, '2026-10-30', '2026-11-05')).toBe(150)
 
-    // Monthly category breakdown for 2026-11: Food ($175) and Transportation ($60), no division by weeks
     const monthlyCat = calculateMonthlyCategoryExtraSpending(transactions, activeBills, '2026-11')
     expect(monthlyCat.totalExtraSpending).toBe(235)
     expect(monthlyCat.highestCategory).toBe('Food')
@@ -174,7 +166,6 @@ describe('weeklyCosts helper (Pay Weeks, Actual Extra Spending, Backdated Income
         amount: 1000,
         category: 'Pay Day - Pay Day',
         frequency: 'weekly',
-        // Even if saved with Nov 6 startDate, Week 1 (Oct 30) still receives $1000
         startDate: '2026-11-06',
         days: [],
         endDate: null
@@ -182,11 +173,8 @@ describe('weeklyCosts helper (Pay Weeks, Actual Extra Spending, Backdated Income
     ]
 
     const transactions = [
-      // In Week 1 (Oct 30 – Nov 5): $90 groceries on Nov 2
       { id: 'tx-w1', date: '2026-11-02', description: 'Groceries', category: 'Food - Groceries', amount: -90, isIncome: false },
-      // In Week 2 (Nov 6 – Nov 12): $110 dining out on Nov 9
       { id: 'tx-w2', date: '2026-11-09', description: 'Restaurant', category: 'Food - Dining Out', amount: -110, isIncome: false },
-      // Bill category match -> excluded from extra spending
       { id: 'tx-debt', date: '2026-11-10', description: 'Other Card Payment', category: 'Debt - Credit Cards', amount: -400, isIncome: false }
     ]
 
@@ -203,31 +191,167 @@ describe('weeklyCosts helper (Pay Weeks, Actual Extra Spending, Backdated Income
       todayDateStr: '2026-11-10'
     })
 
-    // Week 1 (Oct 30 – Nov 5): before today (2026-11-10), so isLoggedSoFar = false
     const week1 = plan.payWeeks[0]
     expect(week1.incomeTotal).toBe(1000)
     expect(week1.extraSpending).toBe(90)
     expect(week1.isLoggedSoFar).toBe(false)
-    expect(week1.before.leftAfterBills).toBe(200) // 1000 - 800
-    expect(week1.before.leftAfterSpending).toBe(110) // 200 - 90
+    expect(week1.before.leftAfterBills).toBe(200)
+    expect(week1.before.leftAfterSpending).toBe(110)
 
-    // Week 2 (Nov 6 – Nov 12): includes today (2026-11-10), so isLoggedSoFar = true
     const week2 = plan.payWeeks[1]
     expect(week2.isLoggedSoFar).toBe(true)
     expect(week2.extraSpending).toBe(110)
     expect(week2.before.billsTotal).toBe(200)
-    expect(week2.before.leftAfterSpending).toBe(690) // 1000 - 200 - 110
+    expect(week2.before.leftAfterSpending).toBe(690)
     expect(week2.after.billsPlusLoanTotal).toBe(0)
-    expect(week2.after.leftAfterSpending).toBe(890) // 1000 - 0 - 110
+    expect(week2.after.leftAfterSpending).toBe(890)
 
-    // Calendar month summary (Nov 1 – Nov 30): actual extra spending = 90 + 110 = 200
     const ms = plan.monthlySummary
     expect(ms.incomeTotal).toBe(4000)
     expect(ms.extraSpendingTotal).toBe(200)
     expect(ms.before.billsTotal).toBe(1150)
-    expect(ms.before.leftAfterSpending).toBe(2650) // 4000 - 1150 - 200
-    expect(ms.after.billsPlusLoanTotal).toBe(1050) // 800 + 250 loan
-    expect(ms.after.leftAfterSpending).toBe(2750) // 4000 - 1050 - 200
+    expect(ms.before.leftAfterSpending).toBe(2650)
+    expect(ms.after.billsPlusLoanTotal).toBe(1050)
+    expect(ms.after.leftAfterSpending).toBe(2750)
+  })
+
+  it('builds True Count for current, past, and future months with authoritative billMonthStatus, future-dated transactions, what-if ahead only, and items to check', () => {
+    const rawBills = [
+      // Due Nov 1 ($800) - logged in transactions
+      { id: 'bill-1', name: 'example rent', dueDate: '2026-01-01', amount: 800, category: 'Housing - Rent/Mortgage' },
+      // Due Nov 5 ($100) - marked paid in billMonthStatus, NOT logged in transactions -> "Marked paid but not logged"
+      { id: 'bill-2', name: 'example phone', dueDate: '2026-01-05', amount: 100, category: 'Housing - Phone' },
+      // Due Nov 8 ($60) - <= today (Nov 10), unpaid and unlogged -> "Bill due with no logged payment"
+      { id: 'bill-3', name: 'example internet', dueDate: '2026-01-08', amount: 60, category: 'Housing - Internet' },
+      // Due Nov 20 ($200) - > today, already logged ahead on Nov 18 (no status entry -> falls back to name match across full month, not double counted!)
+      { id: 'bill-4', name: 'example car payment', dueDate: '2026-01-20', amount: 200, category: 'Transportation - Car Payment' },
+      // Due Nov 22 ($150) - > today, has explicit status { paid: false } even though a transaction with same name exists (authoritative status wins!)
+      { id: 'bill-5', name: 'example card alpha', dueDate: '2026-01-22', amount: 150, category: 'Debt - Credit Cards' },
+      // Due Nov 25 ($90) - > today, unpaid & unlogged, checked in paidOffBillIds
+      { id: 'bill-6', name: 'example card beta', dueDate: '2026-01-25', amount: 90, category: 'Debt - Credit Cards' }
+    ]
+
+    const billMonthStatus = {
+      'bill-2': { '2026-11': { paid: true, amount: 100 } },
+      'bill-5': { '2026-11': { paid: false, amount: 150 } }
+    }
+
+    const incomeSources = [
+      {
+        id: 'inc-1',
+        name: 'Example Paycheck',
+        amount: 1000,
+        category: 'Pay Day - Pay Day',
+        frequency: 'weekly',
+        startDate: '2026-11-06',
+        days: [],
+        endDate: null
+      }
+    ]
+
+    // Nov 6 paycheck is unconfirmed (<= today Nov 10 -> appears in itemsToCheck)
+    const confirmedOccurrences = {}
+
+    const transactions = [
+      // Actual <= today (2026-11-10):
+      { id: 't-inc', date: '2026-11-06', description: 'Example Paycheck', category: 'Pay Day - Pay Day', amount: 1000, isIncome: true },
+      { id: 't-rent', date: '2026-11-01', description: 'Example Rent', category: 'Housing - Rent/Mortgage', amount: -800, isIncome: false },
+      { id: 't-food', date: '2026-11-04', description: 'Groceries', category: 'Food - Groceries', amount: -120, isIncome: false },
+      // Logged ahead (> today 2026-11-10):
+      { id: 't-car-ahead', date: '2026-11-18', description: 'Example Car Payment', category: 'Transportation - Car Payment', amount: -200, isIncome: false }
+    ]
+
+    // Check bill-1 (due Nov 1 <= today) and bill-6 (due Nov 25 > today).
+    // Loan payment of $300 due on day 28 (> today).
+    const currentTc = buildTrueCountSummary({
+      selectedMonth: '2026-11',
+      rawBills,
+      billMonthStatus,
+      incomeSources,
+      confirmedOccurrences,
+      transactions,
+      paidOffBillIds: new Set(['bill-1', 'bill-6']),
+      monthlyLoanPayment: 300,
+      loanPaymentDay: 28,
+      todayDateStr: '2026-11-10'
+    })
+
+    // Actual so far (<= Nov 10): income = 1000, expenses = 800 + 120 = 920, net = 80
+    expect(currentTc.actualSoFar).toEqual({ income: 1000, expenses: 920, net: 80 })
+    // Already logged ahead (> Nov 10): expenses = 200 (t-car-ahead)
+    expect(currentTc.alreadyLoggedAhead).toEqual({ income: 0, expenses: 200 })
+
+    // Still expected ahead (> Nov 10):
+    // - bill-4 (Nov 20, $200) is settled via name match against t-car-ahead -> NOT in stillExpected!
+    // - bill-5 (Nov 22, $150) has explicit paid:false -> included ($150)
+    // - bill-6 (Nov 25, $90) is unsettled -> included in Before ($90), removed in After (checked!)
+    expect(currentTc.stillExpected.billsBefore).toBe(240) // 150 + 90
+    expect(currentTc.stillExpected.billsAfter).toBe(150) // bill-6 removed, bill-1 was already <= today
+    expect(currentTc.stillExpected.loanAfter).toBe(300) // day 28 > Nov 10
+    expect(currentTc.stillExpected.income).toBe(3000) // Nov 13, 20, 27 paychecks
+
+    // Forecast Before Loan: income = 1000 + 3000 = 4000; expenses = 920 + 200 + 240 = 1360; net = 2640
+    expect(currentTc.forecast.income).toBe(4000)
+    expect(currentTc.forecast.before).toEqual({ expenses: 1360, net: 2640 })
+    // Forecast After Loan: expenses = 920 + 200 + 150 + 300 = 1570; net = 2430
+    expect(currentTc.forecast.after).toEqual({ expenses: 1570, net: 2430 })
+
+    // Scheduled Plan Before Loan: income = 4000, bills = 800+100+60+200+150+90 = 1400, extraSpending = 120 -> expenses = 1520, net = 2480
+    expect(currentTc.scheduled).toEqual({ income: 4000, expenses: 1520, net: 2480 })
+    expect(currentTc.differenceFromSchedule).toEqual({
+      income: 0,
+      expenses: 1360 - 1520, // -160 (because bill-2 $100 and bill-3 $60 <= today weren't logged)
+      net: 2640 - 2480 // +160
+    })
+
+    // Items to check:
+    // 1. bill-2: "Marked paid but not logged"
+    // 2. bill-3: "Bill due with no logged payment"
+    // 3. Nov 6 paycheck: "Paycheck not yet confirmed"
+    expect(currentTc.itemsToCheck.map(i => ({ type: i.type, label: i.label, name: i.name }))).toEqual([
+      { type: 'bill_paid_unlogged', label: 'Marked paid but not logged', name: 'example phone' },
+      { type: 'bill_unpaid', label: 'Bill due with no logged payment', name: 'example internet' },
+      { type: 'income_unconfirmed', label: 'Paycheck not yet confirmed', name: 'Example Paycheck' }
+    ])
+
+    // Past month test (selectedMonth = '2026-10' when todayDateStr = '2026-11-10'): Forecast === Actual
+    const pastTc = buildTrueCountSummary({
+      selectedMonth: '2026-10',
+      rawBills,
+      billMonthStatus: {},
+      incomeSources,
+      confirmedOccurrences: {},
+      transactions: [
+        { id: 'oct-inc', date: '2026-10-09', description: 'Paycheck', category: 'Pay Day - Pay Day', amount: 2000, isIncome: true },
+        { id: 'oct-exp', date: '2026-10-12', description: 'Food', category: 'Food - Groceries', amount: -500, isIncome: false }
+      ],
+      paidOffBillIds: new Set(['bill-1']),
+      monthlyLoanPayment: 300,
+      loanPaymentDay: 15,
+      todayDateStr: '2026-11-10'
+    })
+    expect(pastTc.actualSoFar).toEqual({ income: 2000, expenses: 500, net: 1500 })
+    expect(pastTc.forecast.income).toBe(2000)
+    expect(pastTc.forecast.before).toEqual({ expenses: 500, net: 1500 })
+    expect(pastTc.forecast.after).toEqual({ expenses: 500, net: 1500 })
+
+    // Future month test (selectedMonth = '2026-12' when todayDateStr = '2026-11-10'): Actual === 0, Forecast === Schedule
+    const futureTc = buildTrueCountSummary({
+      selectedMonth: '2026-12',
+      rawBills: [{ id: 'b-dec', name: 'example rent', dueDate: '2026-01-01', amount: 800, category: 'Housing - Rent/Mortgage' }],
+      billMonthStatus: {},
+      incomeSources,
+      confirmedOccurrences: {},
+      transactions: [],
+      paidOffBillIds: new Set(),
+      monthlyLoanPayment: 0,
+      loanPaymentDay: 1,
+      todayDateStr: '2026-11-10'
+    })
+    expect(futureTc.actualSoFar).toEqual({ income: 0, expenses: 0, net: 0 })
+    expect(futureTc.forecast.income).toBe(futureTc.scheduled.income)
+    expect(futureTc.forecast.before.expenses).toBe(futureTc.scheduled.expenses)
+    expect(futureTc.differenceFromSchedule).toEqual({ income: 0, expenses: 0, net: 0 })
   })
 
   it('matches debts to active bills, supports both sort modes, avoids double-counting freed payments, guards $0 balance, and warns when balances exceed loan amount', () => {
@@ -238,22 +362,15 @@ describe('weeklyCosts helper (Pay Weeks, Actual Extra Spending, Backdated Income
     ]
 
     const debts = [
-      // Linked to bill-card-1: balance $1800, bill amount $180 -> ratio = 0.10, APR = 19.99%
       { id: 'd-1', name: 'Example Card Alpha', balance: 1800, apr: 19.99, minPayment: 60 },
-      // Linked to bill-loan-1: balance $6000, bill amount $300 -> ratio = 0.05, APR = 26.50%
       { id: 'd-2', name: 'Example Personal Loan', balance: 6000, apr: 26.5, minPayment: 300 },
-      // Unlinked debt (not on Bills page): balance $1000, minPayment $150 -> ratio = 0.15, APR = 15.00%
       { id: 'd-3', name: 'Example Store Card', balance: 1000, apr: 15.0, minPayment: 150 },
-      // $0 balance debt -> guards against divide-by-zero (efficiencyRatio = 0)
       { id: 'd-zero', name: 'Example Paid Card', balance: 0, apr: 29.99, minPayment: 25 }
     ]
 
-    // Check bill-card-1 (linked to d-1), bill-util-1 (not in Debt tab), and d-3 (unlinked debt)
     const paidOffBillIds = new Set(['bill-card-1', 'bill-util-1'])
     const selectedUnlinkedDebtIds = new Set(['d-3'])
 
-    // 1. Default sort: 'efficiency' (Most payment freed per $ of balance)
-    // d-3 (0.15) -> d-1 (0.10) -> d-2 (0.05) -> d-zero (0)
     const byEfficiency = buildPayoffHelperData({
       debts,
       activeBills,
@@ -263,28 +380,21 @@ describe('weeklyCosts helper (Pay Weeks, Actual Extra Spending, Backdated Income
       selectedUnlinkedDebtIds,
       loanAmountReceived: 2500,
       monthlyLoanPayment: 220,
-      sortBy: 'efficiency'
+      sortBy: 'efficiency',
+      currentMonthStr: '2026-11'
     })
 
     expect(byEfficiency.debts.map(d => d.id)).toEqual(['d-3', 'd-1', 'd-2', 'd-zero'])
     expect(byEfficiency.debts.find(d => d.id === 'd-zero').efficiencyRatio).toBe(0)
-
-    // Selected balances = checked debts only: d-1 ($1800) + d-3 ($1000) = $2800 (bill-util-1 has no debt balance)
     expect(byEfficiency.summary.selectedBalancesTotal).toBe(2800)
-    // Loan amount is $2500 -> exceedsLoanAmount = true, short by $300 (-300)
     expect(byEfficiency.summary.exceedsLoanAmount).toBe(true)
     expect(byEfficiency.summary.loanRemainingOrShort).toBe(-300)
-    // 1 checked bill (bill-util-1) has no matching debt on the Debt tab
     expect(byEfficiency.summary.checkedBillsWithoutDebtCount).toBe(1)
-
-    // Monthly payments freed = checked bills ($180 + $100 = $280) + checked unlinked debts ($150) = $430 (d-1 is NOT counted twice)
     expect(byEfficiency.summary.monthlyPaymentsFreed).toBe(430)
     expect(byEfficiency.summary.newLoanPayment).toBe(220)
-    expect(byEfficiency.summary.netMonthlyChange).toBe(210) // 430 - 220
+    expect(byEfficiency.summary.netMonthlyChange).toBe(210)
     expect(byEfficiency.summary.netWeeklyChange).toBeCloseTo((210 * 12) / 52, 5)
 
-    // 2. Sort by 'apr' (Highest APR)
-    // d-zero (29.99) -> d-2 (26.5) -> d-1 (19.99) -> d-3 (15.0)
     const byApr = buildPayoffHelperData({
       debts,
       activeBills,
@@ -292,11 +402,69 @@ describe('weeklyCosts helper (Pay Weeks, Actual Extra Spending, Backdated Income
       selectedUnlinkedDebtIds,
       loanAmountReceived: 5000,
       monthlyLoanPayment: 220,
-      sortBy: 'apr'
+      sortBy: 'apr',
+      currentMonthStr: '2026-11'
     })
     expect(byApr.debts.map(d => d.id)).toEqual(['d-zero', 'd-2', 'd-1', 'd-3'])
     expect(byApr.summary.exceedsLoanAmount).toBe(false)
-    expect(byApr.summary.loanRemainingOrShort).toBe(2200) // 5000 - 2800
+    expect(byApr.summary.loanRemainingOrShort).toBe(2200)
+  })
+
+  it('calculates weighted average APR, lower/higher indicator, standard loan amortization (with >0% and 0% APR), and detects debts that do not pay off at current payment', () => {
+    const checkedDebts = [
+      { id: 'd-a', name: 'Example Debt A', balance: 1000, apr: 20, monthlyPayment: 100 },
+      { id: 'd-b', name: 'Example Debt B', balance: 3000, apr: 24, monthlyPayment: 200 }
+    ]
+    // Weighted APR = (1000*20 + 3000*24) / 4000 = 92000 / 4000 = 23.0%
+
+    // 1. Loan APR = 12% (< 23%), Term = 24 months, Principal = $4000
+    const lowerComp = calculateLoanCostComparison({
+      checkedDebts,
+      loanAmountReceived: 4000,
+      loanApr: 12,
+      loanTermMonths: 24,
+      currentMonthStr: '2026-11'
+    })
+    expect(lowerComp.weightedDebtApr).toBeCloseTo(23, 5)
+    expect(lowerComp.aprComparison).toBe('lower')
+    expect(lowerComp.aprDifference).toBeCloseTo(11, 5)
+    expect(lowerComp.loanEstimatedInterest).toBeGreaterThan(0)
+    expect(lowerComp.checkedDebtsCannotPayOff).toBe(false)
+    expect(lowerComp.checkedDebtsEstimatedInterest).toBeGreaterThan(0)
+
+    // 2. Loan APR = 0% (zero interest amortization) and higher APR test
+    const zeroRateComp = calculateLoanCostComparison({
+      checkedDebts,
+      loanAmountReceived: 2400,
+      loanApr: 0,
+      loanTermMonths: 24,
+      currentMonthStr: '2026-11'
+    })
+    expect(zeroRateComp.loanAmortizedMonthlyPayment).toBeCloseTo(100, 5)
+    expect(zeroRateComp.loanEstimatedInterest).toBe(0)
+
+    const higherComp = calculateLoanCostComparison({
+      checkedDebts,
+      loanAmountReceived: 4000,
+      loanApr: 28,
+      loanTermMonths: 24,
+      currentMonthStr: '2026-11'
+    })
+    expect(higherComp.aprComparison).toBe('higher')
+    expect(higherComp.aprDifference).toBeCloseTo(5, 5)
+
+    // 3. Debt whose monthly payment ($15) does not cover monthly interest ($2000 * 24% / 12 = $40)
+    const nonPayoffComp = calculateLoanCostComparison({
+      checkedDebts: [
+        { id: 'd-bad', name: 'Example Underwater Debt', balance: 2000, apr: 24, monthlyPayment: 15 }
+      ],
+      loanAmountReceived: 2000,
+      loanApr: 10,
+      loanTermMonths: 24,
+      currentMonthStr: '2026-11'
+    })
+    expect(nonPayoffComp.checkedDebtsCannotPayOff).toBe(true)
+    expect(nonPayoffComp.checkedDebtsEstimatedInterest).toBeNull()
   })
 
   it('clamps loan payment day of month for shorter months', () => {

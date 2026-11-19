@@ -123,6 +123,130 @@
           </div>
         </div>
 
+        <!-- Loan Cost Comparison (APR & Optional Term Interest Estimates) -->
+        <div class="p-4 rounded-xl bg-slate-700/40 border border-slate-600 space-y-3">
+          <div class="grid grid-cols-1 md:grid-cols-3 gap-4 items-start">
+            <!-- Loan APR (%) Input -->
+            <div>
+              <label for="loan-apr-input" class="block text-xs font-semibold text-slate-400 uppercase tracking-wide mb-1.5">
+                Loan APR (%)
+              </label>
+              <input
+                id="loan-apr-input"
+                v-model.number="loanApr"
+                type="number"
+                min="0"
+                step="0.01"
+                placeholder="e.g. 12.50"
+                class="w-full px-3.5 py-2 border border-slate-600 rounded-xl bg-slate-900 text-slate-100 focus:outline-none focus:ring-2 focus:ring-rose-500 focus:border-rose-500"
+              />
+            </div>
+
+            <!-- Loan Term (Months, Optional) Input -->
+            <div>
+              <label for="loan-term-input" class="block text-xs font-semibold text-slate-400 uppercase tracking-wide mb-1.5">
+                Loan Term (Months, Optional)
+              </label>
+              <input
+                id="loan-term-input"
+                v-model.number="loanTermMonths"
+                type="number"
+                min="1"
+                step="1"
+                placeholder="e.g. 36"
+                class="w-full px-3.5 py-2 border border-slate-600 rounded-xl bg-slate-900 text-slate-100 focus:outline-none focus:ring-2 focus:ring-rose-500 focus:border-rose-500"
+              />
+            </div>
+
+            <!-- Weighted Average APR of Checked Debts -->
+            <div class="p-3 rounded-xl bg-slate-800/80 border border-slate-600 space-y-1">
+              <div class="flex items-center justify-between text-xs">
+                <span class="text-slate-400">Checked debts weighted APR:</span>
+                <span class="font-bold text-slate-100">
+                  {{ helperData.costComparison.weightedDebtApr !== null ? `${helperData.costComparison.weightedDebtApr.toFixed(2)}%` : '—' }}
+                </span>
+              </div>
+              <div class="flex items-center justify-between text-xs">
+                <span class="text-slate-400">Loan APR:</span>
+                <span class="font-bold text-slate-100">
+                  {{ helperData.costComparison.loanApr !== null ? `${helperData.costComparison.loanApr.toFixed(2)}%` : '—' }}
+                </span>
+              </div>
+              <p
+                v-if="helperData.costComparison.aprComparison === 'lower'"
+                class="text-xs font-semibold text-emerald-400 pt-0.5"
+              >
+                Loan APR is {{ helperData.costComparison.aprDifference.toFixed(2) }}% lower than checked debts
+              </p>
+              <p
+                v-else-if="helperData.costComparison.aprComparison === 'higher'"
+                class="text-xs font-semibold text-rose-400 pt-0.5"
+              >
+                Loan APR is {{ helperData.costComparison.aprDifference.toFixed(2) }}% higher than checked debts
+              </p>
+              <p
+                v-else-if="helperData.costComparison.aprComparison === 'same'"
+                class="text-xs font-semibold text-slate-300 pt-0.5"
+              >
+                Loan APR is the same as checked debts
+              </p>
+            </div>
+          </div>
+
+          <!-- Estimated Total Interest Comparison (shown when Loan Term is entered) -->
+          <div
+            v-if="helperData.costComparison.loanTermMonths !== null"
+            class="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2 border-t border-slate-600"
+          >
+            <div class="p-3 rounded-xl bg-slate-800/80 border border-slate-600 space-y-1">
+              <p class="text-xs font-semibold text-slate-400 uppercase tracking-wide">
+                Estimated Total Loan Interest ({{ helperData.costComparison.loanTermMonths }} mos)
+              </p>
+              <p class="text-lg font-bold text-slate-100">
+                <template v-if="helperData.costComparison.loanEstimatedInterest !== null">
+                  {{ formatCurrency(helperData.costComparison.loanEstimatedInterest) }}
+                  <span class="text-xs font-normal text-slate-400">estimate</span>
+                </template>
+                <template v-else>
+                  <span class="text-xs font-normal text-slate-400">Enter loan amount and APR to estimate</span>
+                </template>
+              </p>
+              <p
+                v-if="helperData.costComparison.loanAmortizedMonthlyPayment !== null"
+                class="text-xs text-slate-400"
+              >
+                Estimated amortized payment: {{ formatCurrency(helperData.costComparison.loanAmortizedMonthlyPayment) }}/mo
+              </p>
+            </div>
+
+            <div class="p-3 rounded-xl bg-slate-800/80 border border-slate-600 space-y-1">
+              <p class="text-xs font-semibold text-slate-400 uppercase tracking-wide">
+                Estimated Remaining Interest on Checked Debts
+              </p>
+              <p
+                v-if="helperData.costComparison.checkedDebtsCannotPayOff"
+                class="text-sm font-semibold text-rose-400"
+              >
+                doesn’t pay off at the current payment
+              </p>
+              <p
+                v-else-if="helperData.costComparison.checkedDebtsEstimatedInterest !== null"
+                class="text-lg font-bold text-slate-100"
+              >
+                {{ formatCurrency(helperData.costComparison.checkedDebtsEstimatedInterest) }}
+                <span class="text-xs font-normal text-slate-400">estimate (at current payments)</span>
+              </p>
+              <p v-else class="text-xs text-slate-400">
+                Check one or more debts below to estimate remaining interest
+              </p>
+            </div>
+          </div>
+
+          <p class="text-xs text-slate-400 italic">
+            Estimates only. Check the lender’s actual terms and total cost.
+          </p>
+        </div>
+
         <!-- Warning if selected balances exceed loan amount -->
         <div
           v-if="helperData.summary.exceedsLoanAmount"
@@ -233,6 +357,8 @@ const emit = defineEmits(['set-bills-paid-off'])
 
 // Local-only state (never saved)
 const loanAmountReceived = ref('')
+const loanApr = ref('')
+const loanTermMonths = ref('')
 const sortBy = ref('efficiency')
 const selectedUnlinkedDebtIds = ref(new Set())
 
@@ -246,6 +372,8 @@ const helperData = computed(() =>
     selectedUnlinkedDebtIds: selectedUnlinkedDebtIds.value,
     loanAmountReceived: loanAmountReceived.value,
     monthlyLoanPayment: props.monthlyLoanPayment,
+    loanApr: loanApr.value,
+    loanTermMonths: loanTermMonths.value,
     sortBy: sortBy.value
   })
 )
@@ -272,4 +400,3 @@ const formatCurrency = (amount) => {
   return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(amount)
 }
 </script>
-
